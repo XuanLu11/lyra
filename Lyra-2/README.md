@@ -35,7 +35,7 @@ NVIDIA <br>
 - 🔒 [May 8, 2026] Lyra 2.0 is temporarily anonymized. Please Google for arxiv and citation.
 - 🚀 [April 15, 2026] Paper, model weights, and inference code are now publicly available!
 - 🚀 [April 17, 2026] 4-step DMD distillation LoRA is now available! See [Fast Inference with DMD Distillation](#fast-inference-with-dmd-distillation) for details.
-- 🔜 [Coming Soon] GUI for interactive scene generation.
+- 🧭 This fork includes a web-based demo UI (`lyra2_demo_ui.py`) for AR video generation, point-cloud preview, and GS reconstruction. The official upstream GUI has not been released yet.
 - ⏳ [Planned] Training code and data processing scripts.
 
 ## Installation
@@ -159,11 +159,50 @@ Output: `outputs/custom_traj/<image_name>.mp4`
 <td><video src="https://github.com/user-attachments/assets/61cfe2f0-b0bf-4077-8367-49968aca7a19" autoplay controls loop muted playsinline preload="auto" width="360"></video></td>
 </tr></table>
 
-#### Option 3: Interactive GUI (Coming Soon!)
+#### Option 3: Web-based Demo UI (This Fork)
 
-We will release our interactive GUI, an online captioning pipeline, and an instruction video in an upcoming update. Stay tuned!
+The official upstream GUI has not been released yet. This fork provides a browser-based demo UI in `lyra2_demo_ui.py` for interactive scene generation, AR continuation, point-cloud preview, and GS reconstruction.
 
-<video src="https://github.com/user-attachments/assets/76394f4d-b6c7-46f2-8133-5eabf5fd74e1" autoplay controls loop muted playsinline preload="auto" width="360"></video>
+The UI supports:
+- selecting a sample image or uploading a custom image;
+- entering a prompt and choosing preset or keyboard-controlled camera trajectories;
+- generating AR video segments with optional DMD fast inference;
+- continuing a scene segment by segment with `AR continuation`;
+- previewing Step-1 sparse point clouds as `PC`;
+- reconstructing a selected segment or `Full scene` into a GS scene;
+- viewing reconstructed `GS` and `GS_Render` outputs.
+
+Start the UI from the `Lyra-2` directory:
+
+```bash
+export PYTHONPATH=.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+python lyra2_demo_ui.py --host 0.0.0.0 --port 7865
+```
+
+Or use the helper script:
+
+```bash
+LYRA_UI_HOST=0.0.0.0 LYRA_UI_PORT=7865 ./start_ui.sh
+```
+
+Then open:
+
+```text
+http://<server-ip>:7865/
+```
+
+If running on a remote server, use SSH port forwarding:
+
+```bash
+ssh -L 7865:127.0.0.1:7865 user@server
+```
+
+and open:
+
+```text
+http://127.0.0.1:7865/
+```
 
 #### Fast Inference with DMD Distillation
 
