@@ -458,12 +458,30 @@ def _save_video_mp4(video_path: str, frames_thwc: np.ndarray, fps: float) -> Non
     if t == 0:
         raise ValueError("No frames to save.")
 
-    os.makedirs(os.path.dirname(video_path), exist_ok=True)
-    from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
-
     frames_uint8 = frames_thwc
     if frames_uint8.dtype != np.uint8:
         frames_uint8 = np.clip(frames_uint8, 0, 255).astype(np.uint8)
+
+    os.makedirs(os.path.dirname(video_path), exist_ok=True)
+    try:
+        from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
+    except ModuleNotFoundError:
+        height, width = frames_uint8.shape[1:3]
+        writer = cv2.VideoWriter(
+            video_path,
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            float(max(fps, 1.0)),
+            (width, height),
+        )
+        if not writer.isOpened():
+            raise RuntimeError(f"Failed to open cv2.VideoWriter for {video_path}")
+        try:
+            for frame in frames_uint8:
+                writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        finally:
+            writer.release()
+        return
+
     frames_list = [frame for frame in frames_uint8]
     clip = ImageSequenceClip(frames_list, fps=float(max(fps, 1.0)))
     try:

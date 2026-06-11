@@ -361,6 +361,35 @@ def save_output(to_show, vid_save_path):
     log.info(f"save video to {vid_save_path}", rank0_only=True)
 
 
+def _write_ascii_point_cloud_ply(
+    output_path: str | os.PathLike,
+    points: np.ndarray,
+    colors: np.ndarray,
+) -> None:
+    """Write a small RGB point cloud PLY for UI/debug visualization."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    colors = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
+    n = int(min(points.shape[0], colors.shape[0]))
+    with output_path.open("w", encoding="ascii") as f:
+        f.write("ply\n")
+        f.write("format ascii 1.0\n")
+        f.write(f"element vertex {n}\n")
+        f.write("property float x\n")
+        f.write("property float y\n")
+        f.write("property float z\n")
+        f.write("property uchar red\n")
+        f.write("property uchar green\n")
+        f.write("property uchar blue\n")
+        f.write("end_header\n")
+        for p, c in zip(points[:n], colors[:n]):
+            f.write(
+                f"{float(p[0]):.6f} {float(p[1]):.6f} {float(p[2]):.6f} "
+                f"{int(c[0])} {int(c[1])} {int(c[2])}\n"
+            )
+
+
 class Lyra2InferencePipeline:
     """Stateful pipeline for Lyra2 autoregressive inference."""
 
@@ -1181,7 +1210,100 @@ class Lyra2InferencePipeline:
 
         raise ValueError(f"Only depth_backend='da3' is supported in this script (VIPE backend removed).")
 
+    def export_sparse_cache_point_cloud(self, output_path: str | os.PathLike, max_points: int = 200000) -> None:
+        """Export the Step-1 retrieval cache as a colored point cloud.
+
+        This is the sparse RGB-D scene Lyra uses during autoregressive video
+        generation for spatial retrieval/warping. It is not the final Gaussian
+        reconstruction from Step 2, but it is useful for seeing the geometry
+        being accumulated while Step 1 runs.
+        """
+        cache = self.retrieval_cache
+        if cache is None or len(cache._world_points) == 0:
+            return
+
+        ds = max(int(getattr(cache, "downsample", 4)), 1)
+        max_points = max(int(max_points), 1)
+        point_chunks: list[np.ndarray] = []
+        color_chunks: list[np.ndarray] = []
+
+        entries = list(range(len(cache._world_points)))
+        per_entry_budget = max(1, int(np.ceil(max_points / max(len(entries), 1))))
+
+        for idx in entries:
+            pts_t = cache._world_points[idx].detach().to("cpu", dtype=torch.float32)
+            if pts_t.dim() != 4 or pts_t.shape[0] < 1:
+                continue
+            pts = pts_t[0].numpy()
+            hp, wp = int(pts.shape[0]), int(pts.shape[1])
+
+            mask = np.isfinite(pts).all(axis=-1)
+            if getattr(cache, "_store_values", False) and idx < len(cache._depths):
+                depth_t = cache._depths[idx].detach().to("cpu", dtype=torch.float32)
+                depth_ds = depth_t[0, 0, ::ds, ::ds].numpy()
+                mask = mask & np.isfinite(depth_ds) & (depth_ds > 0)
+
+            frame_id = int(cache._frame_ids[idx]) if idx < len(cache._frame_ids) else idx
+            rgb_ds = None
+            if frame_id in cache._rgbs:
+                rgb_t = cache._rgbs[frame_id].detach().to("cpu", dtype=torch.float32)
+                if rgb_t.dim() == 4:
+                    rgb_t = rgb_t[0]
+                rgb_ds = rgb_t[:, ::ds, ::ds].permute(1, 2, 0).clamp(0.0, 1.0).numpy()
+            else:
+                hist_idx = int(self.start_index) + frame_id
+                if 0 <= hist_idx < int(self.history_frames.shape[2]):
+                    frame_t = self.history_frames[0, :, hist_idx].detach().to("cpu", dtype=torch.float32)
+                    rgb_ds = (
+                        (frame_t * 0.5 + 0.5)
+                        .clamp(0.0, 1.0)[:, ::ds, ::ds]
+                        .permute(1, 2, 0)
+                        .numpy()
+                    )
+
+            if rgb_ds is None:
+                rgb_ds = np.full((hp, wp, 3), 0.78, dtype=np.float32)
+
+            rgb_ds = rgb_ds[:hp, :wp]
+            mask = mask[: rgb_ds.shape[0], : rgb_ds.shape[1]]
+            pts_flat = pts[: rgb_ds.shape[0], : rgb_ds.shape[1]][mask]
+            rgb_flat = (rgb_ds[mask] * 255.0 + 0.5).clip(0, 255).astype(np.uint8)
+            if pts_flat.shape[0] == 0:
+                continue
+            if pts_flat.shape[0] > per_entry_budget:
+                take = np.linspace(0, pts_flat.shape[0] - 1, num=per_entry_budget, dtype=np.int64)
+                pts_flat = pts_flat[take]
+                rgb_flat = rgb_flat[take]
+            point_chunks.append(pts_flat.astype(np.float32, copy=False))
+            color_chunks.append(rgb_flat)
+
+        if not point_chunks:
+            return
+
+        points = np.concatenate(point_chunks, axis=0)
+        colors = np.concatenate(color_chunks, axis=0)
+        if points.shape[0] > max_points:
+            take = np.linspace(0, points.shape[0] - 1, num=max_points, dtype=np.int64)
+            points = points[take]
+            colors = colors[take]
+
+        _write_ascii_point_cloud_ply(output_path, points, colors)
+        log.info(
+            f"[sparse_cache] Saved Step-1 cache point cloud: {output_path} ({points.shape[0]} points)",
+            rank0_only=True,
+        )
+
     def build_outputs(self, da3_gs_export_stem, log_prefix):
+        sparse_cache_ply = None
+        if da3_gs_export_stem:
+            sparse_cache_ply = str(Path(da3_gs_export_stem).with_suffix("")) + "_sparse_cache.ply"
+            max_points = int(getattr(self.args, "sparse_cache_max_points", 200000))
+            try:
+                self.export_sparse_cache_point_cloud(sparse_cache_ply, max_points=max_points)
+            except Exception as exc:
+                log.warning(f"[sparse_cache] Failed to export Step-1 cache point cloud: {exc}", rank0_only=True)
+                sparse_cache_ply = None
+
         video = self.history_frames[:, :, self.start_index:]
         warp_video = None
         if self.use_pose and len(self.warp_video_collect) > 0:
@@ -1204,6 +1326,7 @@ class Lyra2InferencePipeline:
             "warp_video_merged": warp_out_merged,
             "use_pose": self.use_pose,
             "use_plucker": self.use_plucker,
+            "sparse_cache_ply": sparse_cache_ply,
         }
 
 def run_lyra2_sample(

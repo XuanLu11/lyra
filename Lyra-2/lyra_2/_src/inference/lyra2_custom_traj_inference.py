@@ -170,6 +170,10 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--disable_cache_update", action="store_true")
     parser.add_argument("--multiview_ids", type=int, nargs="+", default=None)
     parser.add_argument("--offload_da3_diffusion", action="store_true")
+    parser.add_argument("--export_sparse_cache_ply", action="store_true",
+                        help="Export the Step-1 sparse retrieval-cache point cloud as *_sparse_cache.ply.")
+    parser.add_argument("--sparse_cache_max_points", type=int, default=200000,
+                        help="Maximum points to write when exporting the Step-1 sparse cache PLY.")
 
     return parser.parse_args()
 
@@ -514,6 +518,7 @@ if __name__ == "__main__":
 
         # ---- Run AR inference ----
         log.info(f"=== Generating video ({N} frames) ===", rank0_only=True)
+        sparse_cache_stem = os.path.join(args.output_path, f"{base_name}_step1") if args.export_sparse_cache_ply else None
         result = run_lyra2_sample(
             model,
             data_batch,
@@ -522,6 +527,7 @@ if __name__ == "__main__":
             da3_model=da3_model,
             show_progress=True,
             log_prefix=f"{base_name}_custom_traj",
+            da3_gs_export_stem=sparse_cache_stem,
         )
 
         if result is None:
@@ -532,6 +538,8 @@ if __name__ == "__main__":
         video_01 = (result["video"][0].clamp(-1, 1) * 0.5 + 0.5).float().cpu()
         save_img_or_video(video_01, video_path.replace(".mp4", ""), fps=args.fps)
         log.info(f"Saved video: {video_path}", rank0_only=True)
+        if result.get("sparse_cache_ply"):
+            log.info(f"Saved Step-1 sparse cache point cloud: {result['sparse_cache_ply']}", rank0_only=True)
 
         del result, data_batch
         if torch.cuda.is_available():

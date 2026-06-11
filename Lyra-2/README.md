@@ -79,6 +79,21 @@ PYTHONPATH=. python -m lyra_2._src.inference.lyra2_zoomgs_inference \
   --num_frames_zoom_out 241 \
   --zoom_in_strength 0.5 \
   --zoom_out_strength 1.5
+
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+PYTHONPATH=. python -m lyra_2._src.inference.lyra2_zoomgs_inference \
+  --input_image_path assets/samples \
+  --sample_id 4 \
+  --experiment lyra2 \
+  --checkpoint_dir checkpoints/model \
+  --prompt_dir assets/samples \
+  --output_path outputs/zoomgs_dmd \
+  --num_frames_zoom_in 81 \
+  --num_frames_zoom_out 241 \
+  --zoom_in_strength 0.5 \
+  --zoom_out_strength 1.5 \
+  --use_dmd
 ```
 
 Outputs written to `outputs/zoomgs/<sample_id>/`:
@@ -119,6 +134,18 @@ PYTHONPATH=. python -m lyra_2._src.inference.lyra2_custom_traj_inference \
   --captions_path assets/custom_trajectory_examples/example_0/captions.json \
   --num_frames 481 \
   --output_path outputs/custom_traj
+
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+PYTHONPATH=. python -m lyra_2._src.inference.lyra2_custom_traj_inference \
+  --input_image_path assets/custom_trajectory_examples/example_0/first_frame.png \
+  --trajectory_path assets/custom_trajectory_examples/example_0/trajectory.npz \
+  --experiment lyra2 \
+  --checkpoint_dir checkpoints/model \
+  --captions_path assets/custom_trajectory_examples/example_0/captions.json \
+  --num_frames 481 \
+  --output_path outputs/custom_traj_dmd \
+  --use_dmd
 ```
 
 Output: `outputs/custom_traj/<image_name>.mp4`

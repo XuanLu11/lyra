@@ -231,6 +231,10 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--disable_cache_update", action="store_true")
     parser.add_argument("--multiview_ids", type=int, nargs="+", default=None)
     parser.add_argument("--offload_da3_diffusion", action="store_true")
+    parser.add_argument("--export_sparse_cache_ply", action="store_true",
+                        help="Export Step-1 sparse retrieval-cache point clouds for zoom-in/out.")
+    parser.add_argument("--sparse_cache_max_points", type=int, default=200000,
+                        help="Maximum points to write per Step-1 sparse cache PLY.")
 
     return parser.parse_args()
 
@@ -369,6 +373,7 @@ def _generate_one_direction(
     ground_normal_cam: torch.Tensor | None = None,
     upward_shift: float = 0.0,
     zoom_out_upward_ratio: float = 0.0,
+    sparse_cache_export_stem: str | None = None,
 ) -> dict | None:
     """Run AR spatial inference for a single camera trajectory direction."""
     device = model.tensor_kwargs.get("device", None)
@@ -450,6 +455,7 @@ def _generate_one_direction(
             da3_model=da3_model,
             show_progress=True,
             log_prefix=log_prefix,
+            da3_gs_export_stem=sparse_cache_export_stem,
         )
     finally:
         args.num_frames = saved_num_frames
@@ -731,6 +737,7 @@ if __name__ == "__main__":
             process_group=process_group,
             log_prefix=f"{base_name}_zoom_in",
             ground_normal_cam=ground_normal,
+            sparse_cache_export_stem=(os.path.join(per_image_dir, "zoom_in_step1") if args.export_sparse_cache_ply else None),
         )
 
         gc.collect()
@@ -758,6 +765,7 @@ if __name__ == "__main__":
             upward_shift=args.zoom_out_upward_shift,
             ground_normal_cam=ground_normal,
             zoom_out_upward_ratio=args.zoom_out_upward_ratio,
+            sparse_cache_export_stem=(os.path.join(per_image_dir, "zoom_out_step1") if args.export_sparse_cache_ply else None),
         )
 
         if result_in is None and result_out is None:
@@ -775,6 +783,8 @@ if __name__ == "__main__":
             to_show.append(res["video"])
             save_output(to_show, vid_stem + ".mp4")
             log.info(f"Saved {tag} video: {vid_stem}.mp4", rank0_only=True)
+            if res.get("sparse_cache_ply"):
+                log.info(f"Saved {tag} Step-1 sparse cache point cloud: {res['sparse_cache_ply']}", rank0_only=True)
 
         # Combine zoom-out (reversed) + zoom-in into a single video
         videos_to_combine = []
